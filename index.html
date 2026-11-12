@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>liosh.dev</title>
+  <meta name="description" content="liosh — creative dev projects by Liam and Josh.">
+  <meta name="theme-color" content="#0b0a12">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='40' fill='%23ff7a59'/></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@1,9..144,300&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      background: #0b0a12;
+      color: #f4efe6;
+      overflow: hidden;
+    }
+
+    canvas {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    main {
+      position: relative;
+      z-index: 1;
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1.25rem;
+      padding: 2rem;
+      text-align: center;
+      pointer-events: none;
+    }
+
+    h1 {
+      font-family: "Fraunces", Georgia, serif;
+      font-style: italic;
+      font-weight: 300;
+      font-size: clamp(4rem, 18vw, 12rem);
+      line-height: 0.9;
+      letter-spacing: -0.03em;
+      mix-blend-mode: difference;
+    }
+
+    p {
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: clamp(0.7rem, 2.6vw, 0.85rem);
+      letter-spacing: 0.25em;
+      text-transform: lowercase;
+      opacity: 0.6;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="flow" aria-hidden="true"></canvas>
+  <main>
+    <h1>liosh</h1>
+    <p>liam + josh &middot; creative dev</p>
+  </main>
+
+  <script>
+    (() => {
+      const canvas = document.getElementById("flow");
+      const ctx = canvas.getContext("2d");
+      const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const palette = ["#ff7a59", "#ffb36b", "#7c5cff", "#3fd0c9", "#f25f9c"];
+
+      let w, h, dpr, particles, t = 0;
+
+      // Cheap smooth pseudo-noise: layered sines give an organic flow field.
+      const field = (x, y, t) =>
+        Math.sin(x * 0.0021 + t * 0.6) * 1.4 +
+        Math.cos(y * 0.0027 - t * 0.4) * 1.2 +
+        Math.sin((x + y) * 0.0013 + t * 0.25) * 1.6;
+
+      function spawn(p = {}) {
+        p.x = Math.random() * w;
+        p.y = Math.random() * h;
+        p.life = 0;
+        p.max = 200 + Math.random() * 300;
+        p.color = palette[(Math.random() * palette.length) | 0];
+        p.speed = 0.6 + Math.random() * 1.2;
+        return p;
+      }
+
+      function resize() {
+        dpr = Math.min(window.devicePixelRatio || 1, 2);
+        w = window.innerWidth;
+        h = window.innerHeight;
+        canvas.width = w * dpr;
+        canvas.height = h * dpr;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.fillStyle = "#0b0a12";
+        ctx.fillRect(0, 0, w, h);
+        const count = Math.round(Math.min(900, (w * h) / 1400));
+        particles = Array.from({ length: count }, () => spawn());
+      }
+
+      function frame() {
+        t += 0.004;
+        // Translucent wash leaves fading trails behind each particle.
+        ctx.fillStyle = "rgba(11, 10, 18, 0.06)";
+        ctx.fillRect(0, 0, w, h);
+        ctx.lineWidth = 1.2;
+        ctx.lineCap = "round";
+
+        for (const p of particles) {
+          const a = field(p.x, p.y, t);
+          const nx = p.x + Math.cos(a) * p.speed;
+          const ny = p.y + Math.sin(a) * p.speed;
+          const fade = Math.sin((p.life / p.max) * Math.PI);
+
+          ctx.globalAlpha = 0.55 * fade;
+          ctx.strokeStyle = p.color;
+          ctx.beginPath();
+          ctx.moveTo(p.x, p.y);
+          ctx.lineTo(nx, ny);
+          ctx.stroke();
+
+          p.x = nx;
+          p.y = ny;
+          if (++p.life > p.max || nx < -10 || nx > w + 10 || ny < -10 || ny > h + 10) spawn(p);
+        }
+        ctx.globalAlpha = 1;
+        if (!reduceMotion) requestAnimationFrame(frame);
+      }
+
+      let resizeTimer;
+      window.addEventListener("resize", () => {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(resize, 150);
+      });
+
+      resize();
+      if (reduceMotion) {
+        // Render a static snapshot instead of animating.
+        for (let i = 0; i < 400; i++) frame();
+      } else {
+        requestAnimationFrame(frame);
+      }
+    })();
+  </script>
+</body>
+</html>
