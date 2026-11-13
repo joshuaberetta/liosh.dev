@@ -2,7 +2,7 @@
 
 The home of **liosh**, creative dev projects by Liam and Josh. The page is a toy
 physics playground: every word on it is a magnetized block you can drag, throw
-and knock around, sitting in one of three simulations.
+and knock around, sitting in one of four simulations.
 
 - **Magnetic**: tens of thousands of iron filings on paper, pulled into field
   lines by wandering bar magnets, the magnet in your hand, and the words.
@@ -10,6 +10,8 @@ and knock around, sitting in one of three simulations.
   eddies, wakes and stirring.
 - **Ferrofluid**: liquid chrome pulled into magnetic peaks around the words,
   with pointer attraction and expanding shockwaves.
+- **Sand**: a Chladni plate. Dial in a frequency and, at each resonance, sand
+  bouncing on the ringing plate gathers along its still nodal lines.
 
 It's a static site with no build step and no runtime dependencies, served by
 GitHub Pages at <https://liosh.dev> from the `main` branch.
@@ -24,7 +26,7 @@ npm run serve          # or: python3 -m http.server 8000
 
 Then open <http://localhost:8000>.
 
-To smoke-test all three modes at desktop and phone sizes:
+To smoke-test all four modes at desktop and phone sizes:
 
 ```sh
 npm install            # once; installs puppeteer-core, which drives your own Chrome
@@ -43,11 +45,14 @@ without errors and still look wrong.
 | Hand magnet (magnetic) | follows the cursor; click to flip N/S | follows your finger |
 | Tap the paper (magnetic) | space, or **tap paper** | shake the phone |
 | Tilt | arrow keys | tilt the phone (iOS asks permission on first tap) |
-| Pour filings (magnetic) | hold P, or **pour** then drag | **pour** then drag |
+| Pour filings or sand | hold P, or **pour** then drag | **pour** then drag |
 | Stir (water) | move or drag the cursor | drag |
 | Attract ferrofluid | move or hold the cursor | touch and drag |
 | Ferrofluid shockwave | space, quick drag, throw a word, or **shockwave** | tap, quick drag, throw a word, or **shockwave** |
 | Magnetic pull / calm surface | **pull** slider / **calm** | **pull** slider / **calm** |
+| Plate frequency (sand) | **freq** slider (snaps when let go near a resonance); [ and ] step between resonances; **next resonance** | **freq** slider; **next resonance** |
+| Damp the plate (sand) | hold the mouse down on it | touch and hold |
+| Knock the plate (sand) | space | shake the phone |
 | Recenter the words | C, or **recenter** | **recenter** |
 
 ## Files
@@ -60,6 +65,7 @@ lib/render.js    Draws the filings (WebGL2).
 lib/blocks.js    Word blocks: their fields, rigid-body physics, collisions.
 lib/fluid.js     Water: GPU fluid solver, and its rendering (WebGL2).
 lib/ferrofluid.js Ferrofluid: magnetic heightfield and chrome shading (WebGL2).
+lib/sand.js      Sand: Chladni plate modes, bouncing grains, and their rendering (WebGL2).
 tools/check.mjs  Headless smoke test.
 ```
 
@@ -216,6 +222,46 @@ and touch/mouse coordinate transforms as the other modes.
   adds an expanding impulse, and **calm** clears waves while retaining the
   magnetic shape. Space triggers a shockwave; **scatter** remains magnetic-only.
 
+### Sand (`lib/sand.js`)
+
+A Chladni plate: a steel plate driven at one frequency, with sand on it. The
+plate spans the screen, and the grains are points in flat arrays, like the
+filings but with a height so they can hop.
+
+- **Modes.** The plate's standing waves are the classic square free-plate forms
+  `cos(mπu)cos(nπv) ± cos(nπu)cos(mπv)` for orders up to `MAX_ORDER`. Their
+  frequencies go as `m² + n²` (a plate's frequency rises with wavenumber
+  squared), and the free edges split each ± pair apart by `SPLIT`. Modes closer
+  than 3% to a lower one are dropped. Two modes ringing at nearly the same
+  frequency are out of phase, so neither's nodes would hold still and the
+  lines would break up.
+- **Response.** Each mode responds as a damped oscillator,
+  `1 / (1 − r² + i·r/Q)` with `r = f / fₙ`, so it peaks at `Q` on resonance.
+  The responses are summed in phase with the strongest mode onto a grid
+  (signed, so interpolation finds the exact zero crossing), relative to a full
+  resonance. Between resonances the plate barely moves and the sand lies still.
+  The field is only recomputed when the frequency or a touch changes.
+- **Grains.** Where the amplitude is over `THRESHOLD`, a resting grain is thrown
+  up (`HOP`) and sideways (`KICK`), tipped down the amplitude slope toward the
+  nodes (`DRIFT`). Airborne grains fall under `GZ`, and landing scuffs off most
+  of their speed. Below the threshold they still creep downhill onto the node,
+  each stopping its own small distance short (`LINE`), which gives the lines
+  their width without any grain-to-grain physics. On the plate, tilt slides them
+  once it beats static friction, and while airborne it drifts them downhill.
+- **Touch.** A finger on the plate adds damping to each mode in proportion to
+  how much it moves there (`TOUCH`), so the plate favours patterns with a node
+  under the finger.
+- **Words** are solids the sand piles against, shoved out like filings if a
+  word lands on them. The words don't feel the vibration and step like they do
+  on paper, so the calibrated layout holds still.
+- **Rendering.** Brushed steel glowing faintly coral where the plate moves most,
+  then every grain as a point sprite twice: a shadow that falls further away the
+  higher it hops, then the grain.
+- **Reduced motion.** The sim jumps straight to the settled pattern
+  (`settle()`) whenever the frequency, a touch, or the layout changes. Pouring
+  and dragging words still animate, since they're direct, and the sand settles
+  when you let go.
+
 ## Extending it
 
 ### Add or change words
@@ -257,6 +303,8 @@ The physics constants sit at the top of each file with comments. The most useful
 | `restless` | `home.js` | constant jostle that keeps filings drifting |
 | `uStrength` (vorticity), `uRelax` | `fluid.js` | how swirly the water is, and how firmly it follows the current |
 | `PRESSURE_ITERATIONS` | `fluid.js` | incompressibility accuracy against GPU cost |
+| `Q`, `MAX_ORDER` | `sand.js` | how sharp the plate's resonances are, and how fine its patterns get |
+| `THRESHOLD`, `HOP`, `KICK`, `DRIFT` | `sand.js` | how readily and how far sand bounces toward the nodes |
 
 When tuning, keep three things true:
 
@@ -269,7 +317,8 @@ When tuning, keep three things true:
 The filings run on the main thread. `adapt()` drops filings when a step averages
 over 10 ms. The water runs on the GPU at about 170 cells on the screen's short
 side (128 on small screens), with dye at a higher resolution. Test on a real
-phone before raising either.
+phone before raising either. The sand runs on the main thread too, but its
+grains don't interact, so its cost is linear and small (up to 32,000 grains).
 
 ## Deploying
 

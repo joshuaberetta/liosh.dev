@@ -6,9 +6,10 @@ the simulations work; read the relevant section there before changing physics.
 ## What this is
 
 liosh.dev, a static GitHub Pages site by Liam and Josh. The homepage is an
-interactive physics toy: draggable magnetized word blocks in either an iron
-filings simulation (CPU physics, WebGL2 rendering) or a water simulation (GPU
-fluid).
+interactive physics toy: draggable magnetized word blocks in an iron filings
+simulation (CPU physics, WebGL2 rendering), a water simulation (GPU fluid), a
+ferrofluid heightfield, or sand on a vibrating Chladni plate (CPU grains, WebGL2
+rendering).
 
 ## Ground rules
 

@@ -125,10 +125,10 @@
     .pour-mode canvas { cursor: cell; }
 
     /* Exactly one canvas and one set of mode-specific controls are visible. */
-    #water, #ferrofluid, [data-mode] { display: none; }
-    body:not(.water):not(.ferrofluid) [data-mode="magnetic"], .water [data-mode="water"], .ferrofluid [data-mode="ferrofluid"] { display: inline-flex; }
-    .water #field, .ferrofluid #field { display: none; }
-    .water #water, .ferrofluid #ferrofluid { display: block; }
+    #water, #ferrofluid, #sand, [data-mode] { display: none; }
+    body:not(.water):not(.ferrofluid):not(.sand) [data-mode~="magnetic"], .water [data-mode~="water"], .ferrofluid [data-mode~="ferrofluid"], .sand [data-mode~="sand"] { display: inline-flex; }
+    .water #field, .ferrofluid #field, .sand #field { display: none; }
+    .water #water, .ferrofluid #ferrofluid, .sand #sand { display: block; }
     button:active { transform: scale(0.97); }
 
     input[type="range"] {
@@ -136,12 +136,15 @@
       accent-color: #ff7a59;
       cursor: pointer;
     }
+
+    #hz { min-width: 4.2em; text-align: right; opacity: 0.75; }
   </style>
 </head>
 <body>
   <canvas id="field" aria-hidden="true"></canvas>
   <canvas id="water" aria-hidden="true"></canvas>
   <canvas id="ferrofluid" aria-hidden="true"></canvas>
+  <canvas id="sand" aria-hidden="true"></canvas>
   <main>
     <h1 class="block" data-pole="N">liosh</h1>
     <p>
@@ -161,8 +164,10 @@
       <button data-action="tap" data-mode="magnetic">tap paper</button>
       <label data-mode="magnetic">words <input type="range" id="letters" min="0" max="3" step="0.05" value="1" aria-label="Word magnet strength"></label>
       <button data-action="flip" data-mode="magnetic">hand: <span id="pole">N</span></button>
-      <button data-action="pour" data-mode="magnetic" aria-pressed="false">pour</button>
-      <button data-action="scatter" data-mode="magnetic">scatter</button>
+      <label data-mode="sand">freq <input type="range" id="freq" min="0" max="1000" step="1" value="500" aria-label="Plate frequency"><span id="hz"></span></label>
+      <button data-action="resonance" data-mode="sand">next resonance</button>
+      <button data-action="pour" data-mode="magnetic sand" aria-pressed="false">pour</button>
+      <button data-action="scatter" data-mode="magnetic sand">scatter</button>
       <label data-mode="water">current <input type="range" id="current" min="0" max="3" step="0.05" value="1" aria-label="Water current"></label>
       <button data-action="calm" data-mode="water">calm</button>
       <label data-mode="ferrofluid">pull <input type="range" id="pull" min="0.25" max="2" step="0.05" value="1" aria-label="Magnetic pull"></label>

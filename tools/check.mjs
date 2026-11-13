@@ -1,5 +1,5 @@
 // Smoke test: serve the site, load it in headless Chrome at desktop and phone
-// sizes, exercise all three modes, save screenshots, and fail on any page error.
+// sizes, exercise all four modes, save screenshots, and fail on any page error.
 //
 //   npm install          (once, for puppeteer-core)
 //   npm run check
@@ -99,14 +99,30 @@ try {
     await page.screenshot({ path: join(shots, `${name}-shockwave.png`) });
     const ferrofluidFps = await fps(page);
     await page.$eval('[data-action="calm"]', (b) => b.click());
-    for (const expected of ["magnetic", "water", "ferrofluid", "magnetic"]) {
+
+    // Sand: let a pattern form, step to the next resonance, then pour some sand.
+    await page.$eval('[data-action="mode"]', (b) => b.click());
+    await wait(5000);
+    await page.screenshot({ path: join(shots, `${name}-sand.png`) });
+    const sandFps = await fps(page);
+    await page.$eval('[data-action="resonance"]', (b) => b.click());
+    await wait(5000);
+    await page.screenshot({ path: join(shots, `${name}-sand-next.png`) });
+    await page.$eval('[data-action="pour"]', (b) => b.click());
+    await page.mouse.move(viewport.width * 0.3, viewport.height * 0.3);
+    await page.mouse.down();
+    for (let i = 1; i <= 20; i++) await page.mouse.move(viewport.width * (0.3 + i * 0.01), viewport.height * 0.3), await wait(20);
+    await page.mouse.up();
+    await page.$eval('[data-action="pour"]', (b) => b.click());
+
+    for (const expected of ["magnetic", "water", "ferrofluid", "sand", "magnetic"]) {
       await page.$eval('[data-action="mode"]', (b) => b.click());
       const state = await page.evaluate(() => ({
         mode: document.getElementById("mode").textContent,
         visible: [...document.querySelectorAll("canvas")].filter((c) => getComputedStyle(c).display !== "none").map((c) => c.id),
         controls: [...document.querySelectorAll("[data-mode]")].filter((e) => getComputedStyle(e).display !== "none").map((e) => e.dataset.mode),
       }));
-      if (state.mode !== expected || state.visible.length !== 1 || state.controls.length === 0 || !state.controls.every((control) => control === expected)) {
+      if (state.mode !== expected || state.visible.length !== 1 || state.controls.length === 0 || !state.controls.every((control) => control.split(" ").includes(expected))) {
         problems.push(`${name}: bad mode/controls after switching to ${expected}: ${JSON.stringify(state)}`);
       }
     }
@@ -122,8 +138,11 @@ try {
     await page.$eval('[data-action="shock"]', (b) => b.click());
     await wait(400);
     await page.screenshot({ path: join(shots, `${name}-reduced-shock.png`) });
+    await page.$eval('[data-action="mode"]', (b) => b.click());
+    await wait(500);
+    await page.screenshot({ path: join(shots, `${name}-reduced-sand.png`) });
 
-    console.log(`${name.padEnd(8)} magnetic ${magneticFps} fps · water ${waterFps} fps · ferrofluid ${ferrofluidFps} fps`);
+    console.log(`${name.padEnd(8)} magnetic ${magneticFps} fps · water ${waterFps} fps · ferrofluid ${ferrofluidFps} fps · sand ${sandFps} fps`);
     await page.close();
   }
 } finally {
