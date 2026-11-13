@@ -18,6 +18,9 @@
       background: #0b0a12;
       color: #f4efe6;
       overflow: hidden;
+      touch-action: none;
+      -webkit-user-select: none;
+      user-select: none;
     }
 
     canvas {
@@ -57,97 +60,254 @@
       font-size: clamp(0.7rem, 2.6vw, 0.85rem);
       letter-spacing: 0.25em;
       text-transform: lowercase;
-      opacity: 0.6;
+      opacity: 0.75;
+      text-shadow: 0 0 6px #0b0a12, 0 0 12px #0b0a12, 0 0 24px #0b0a12;
     }
+
+    .hint {
+      position: fixed;
+      bottom: calc(1.5rem + env(safe-area-inset-bottom));
+      left: 0;
+      right: 0;
+      font-size: 0.65rem;
+      opacity: 0.4;
+      transition: opacity 0.6s;
+    }
+
+    .hint[hidden] { display: block; opacity: 0; }
   </style>
 </head>
 <body>
-  <canvas id="flow" aria-hidden="true"></canvas>
+  <canvas id="field" aria-hidden="true"></canvas>
   <main>
     <h1>liosh</h1>
     <p>liam + josh &middot; creative dev</p>
+    <p class="hint" id="hint" hidden>tap to steer with tilt</p>
   </main>
 
   <script>
     (() => {
-      const canvas = document.getElementById("flow");
+      const canvas = document.getElementById("field");
       const ctx = canvas.getContext("2d");
+      const hint = document.getElementById("hint");
       const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
-      const palette = ["#ff7a59", "#ffb36b", "#7c5cff", "#3fd0c9", "#f25f9c"];
 
-      let w, h, dpr, particles, t = 0;
+      // Brightness buckets let thousands of filings render in a few stroke calls.
+      const SHADES = [
+        "rgba(150, 146, 160, 0.25)",
+        "rgba(178, 174, 186, 0.45)",
+        "rgba(206, 202, 210, 0.7)",
+        "rgba(240, 236, 230, 0.95)",
+      ];
 
-      // Cheap smooth pseudo-noise: layered sines give an organic flow field.
-      const field = (x, y, t) =>
-        Math.sin(x * 0.0021 + t * 0.6) * 1.4 +
-        Math.cos(y * 0.0027 - t * 0.4) * 1.2 +
-        Math.sin((x + y) * 0.0013 + t * 0.25) * 1.6;
+      let w, h, unit, soft, filings, t = 0;
 
-      function spawn(p = {}) {
-        p.x = Math.random() * w;
-        p.y = Math.random() * h;
-        p.life = 0;
-        p.max = 200 + Math.random() * 300;
-        p.color = palette[(Math.random() * palette.length) | 0];
-        p.speed = 0.6 + Math.random() * 1.2;
-        return p;
-      }
+      // The user's magnet: follows the cursor, a touch, or the phone's tilt.
+      const magnet = { x: 0, y: 0, tx: 0, ty: 0, strength: 0, active: false, polarity: 1 };
+      let tilt = null;
+      let touching = false;
 
       function resize() {
-        dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
         w = window.innerWidth;
         h = window.innerHeight;
+        unit = Math.min(w, h);
+        soft = (unit * 0.03) ** 2;
         canvas.width = w * dpr;
         canvas.height = h * dpr;
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        ctx.fillStyle = "#0b0a12";
-        ctx.fillRect(0, 0, w, h);
-        const count = Math.round(Math.min(900, (w * h) / 1400));
-        particles = Array.from({ length: count }, () => spawn());
+        const count = Math.round(Math.min(22000, (w * h) / 85));
+        filings = Array.from({ length: count }, () => {
+          const f = spawn({ angle: Math.random() * Math.PI });
+          f.life = Math.random() * f.max;
+          return f;
+        });
+        if (!magnet.active) magnet.x = magnet.tx = w / 2, magnet.y = magnet.ty = h / 2;
       }
 
-      function frame() {
-        t += 0.004;
-        // Translucent wash leaves fading trails behind each particle.
-        ctx.fillStyle = "rgba(11, 10, 18, 0.06)";
-        ctx.fillRect(0, 0, w, h);
-        ctx.lineWidth = 1.2;
-        ctx.lineCap = "round";
+      function spawn(f) {
+        f.x = Math.random() * w;
+        f.y = Math.random() * h;
+        f.len = 3 + Math.random() * 6;
+        f.ease = 0.06 + Math.random() * 0.1;
+        f.life = 0;
+        f.max = 500 + Math.random() * 900;
+        return f;
+      }
 
-        for (const p of particles) {
-          const a = field(p.x, p.y, t);
-          const nx = p.x + Math.cos(a) * p.speed;
-          const ny = p.y + Math.sin(a) * p.speed;
-          const fade = Math.sin((p.life / p.max) * Math.PI);
-
-          ctx.globalAlpha = 0.55 * fade;
-          ctx.strokeStyle = p.color;
-          ctx.beginPath();
-          ctx.moveTo(p.x, p.y);
-          ctx.lineTo(nx, ny);
-          ctx.stroke();
-
-          p.x = nx;
-          p.y = ny;
-          if (++p.life > p.max || nx < -10 || nx > w + 10 || ny < -10 || ny > h + 10) spawn(p);
+      // Two slowly wandering bar magnets (each a +/- pole pair) plus the user's magnet.
+      function poles() {
+        const list = [];
+        const bar = (cx, cy, a, q) => {
+          const s = unit * 0.11;
+          list.push({ x: cx + Math.cos(a) * s, y: cy + Math.sin(a) * s, q });
+          list.push({ x: cx - Math.cos(a) * s, y: cy - Math.sin(a) * s, q: -q });
+        };
+        bar(w * (0.28 + Math.sin(t * 0.13) * 0.08), h * (0.38 + Math.cos(t * 0.11) * 0.1), t * 0.07, 1);
+        bar(w * (0.72 + Math.cos(t * 0.09) * 0.08), h * (0.64 + Math.sin(t * 0.12) * 0.1), Math.PI / 2 - t * 0.05, 1);
+        if (magnet.strength > 0.001) {
+          list.push({ x: magnet.x, y: magnet.y, q: 2.2 * magnet.strength * magnet.polarity });
         }
-        ctx.globalAlpha = 1;
-        if (!reduceMotion) requestAnimationFrame(frame);
+        return list;
+      }
+
+      function step(snap) {
+        t += 0.016;
+
+        const tx = tilt ? tilt.x : magnet.tx;
+        const ty = tilt ? tilt.y : magnet.ty;
+        const on = magnet.active || !!tilt;
+        magnet.x += (tx - magnet.x) * 0.12;
+        magnet.y += (ty - magnet.y) * 0.12;
+        magnet.strength += ((on ? 1 : 0) - magnet.strength) * 0.05;
+
+        const ps = poles();
+        const paths = SHADES.map(() => new Path2D());
+
+        for (const f of filings) {
+          let bx = 0, by = 0, sink = false, pullSign = 0, strongest = 0;
+          for (const p of ps) {
+            const dx = f.x - p.x, dy = f.y - p.y;
+            const r2 = dx * dx + dy * dy;
+            if (r2 < soft * 0.3) sink = true;
+            const k = p.q / (r2 + soft);
+            bx += dx * k;
+            by += dy * k;
+            const s = Math.abs(p.q) / Math.sqrt(r2 + soft);
+            if (s > strongest) strongest = s, pullSign = -Math.sign(p.q);
+          }
+
+          const mag = Math.hypot(bx, by);
+          // Filings are unoriented: align to the field line, whichever way is closer.
+          const target = Math.atan2(by, bx);
+          let diff = target - f.angle;
+          diff = ((diff + Math.PI / 2) % Math.PI + Math.PI) % Math.PI - Math.PI / 2;
+          f.angle += snap ? diff : diff * f.ease;
+
+          // Like real filings, creep along the field line toward the nearest pole.
+          const pull = Math.min(mag * unit * 0.25, 1.2) * pullSign;
+          if (mag > 0) {
+            f.x += (bx / mag) * pull * 0.35;
+            f.y += (by / mag) * pull * 0.35;
+          }
+
+          const fade = Math.min(1, f.life / 60, (f.max - f.life) / 60);
+          const bright = (0.2 + 0.8 * (1 - Math.exp(-mag * unit * 0.9))) * fade;
+          const shade = Math.min(SHADES.length - 1, (bright * SHADES.length) | 0);
+          const half = f.len * (0.6 + bright * 0.6) / 2;
+          const cx = Math.cos(f.angle) * half, cy = Math.sin(f.angle) * half;
+          paths[shade].moveTo(f.x - cx, f.y - cy);
+          paths[shade].lineTo(f.x + cx, f.y + cy);
+
+          if (++f.life > f.max || sink || f.x < -10 || f.x > w + 10 || f.y < -10 || f.y > h + 10) spawn(f);
+        }
+
+        ctx.fillStyle = "#0b0a12";
+        ctx.fillRect(0, 0, w, h);
+        ctx.lineWidth = 1.1;
+        ctx.lineCap = "round";
+        paths.forEach((path, i) => {
+          ctx.strokeStyle = SHADES[i];
+          ctx.stroke(path);
+        });
+      }
+
+      function loop() {
+        step(false);
+        requestAnimationFrame(loop);
+      }
+
+      // Reduced motion: no animation, just redraw a settled frame when input changes.
+      let pending = false;
+      function redraw() {
+        if (!reduceMotion || pending) return;
+        pending = true;
+        requestAnimationFrame(() => {
+          pending = false;
+          magnet.strength = magnet.active || tilt ? 1 : 0;
+          if (tilt) magnet.x = tilt.x, magnet.y = tilt.y;
+          else magnet.x = magnet.tx, magnet.y = magnet.ty;
+          for (const f of filings) f.life = 60;
+          step(true);
+        });
+      }
+
+      window.addEventListener("pointermove", (e) => {
+        if (e.pointerType !== "mouse" && !touching) return;
+        magnet.tx = e.clientX;
+        magnet.ty = e.clientY;
+        magnet.active = true;
+        redraw();
+      });
+
+      document.addEventListener("pointerleave", () => { magnet.active = false; redraw(); });
+      document.addEventListener("mouseout", (e) => { if (!e.relatedTarget) { magnet.active = false; redraw(); } });
+
+      window.addEventListener("pointerdown", (e) => {
+        // Click or tap flips the magnet's polarity.
+        magnet.polarity *= -1;
+        if (e.pointerType !== "mouse") {
+          touching = true;
+          magnet.tx = e.clientX;
+          magnet.ty = e.clientY;
+          magnet.active = true;
+          if (!tilt) magnet.x = e.clientX, magnet.y = e.clientY;
+          requestTiltPermission();
+        }
+        redraw();
+      });
+
+      window.addEventListener("pointerup", (e) => {
+        if (e.pointerType === "mouse") return;
+        touching = false;
+        magnet.active = false;
+        redraw();
+      });
+      window.addEventListener("pointercancel", () => { touching = false; magnet.active = false; });
+
+      // Phone tilt steers the magnet like a marble rolling around the screen.
+      function onOrientation(e) {
+        if (e.beta == null || e.gamma == null || touching) {
+          if (touching) tilt = null;
+          return;
+        }
+        const clamp = (v) => Math.max(-1, Math.min(1, v));
+        tilt = {
+          x: w / 2 + clamp(e.gamma / 30) * w * 0.45,
+          y: h / 2 + clamp((e.beta - 40) / 30) * h * 0.45,
+        };
+        hint.hidden = true;
+        redraw();
+      }
+
+      const needsPermission = typeof DeviceOrientationEvent !== "undefined" &&
+        typeof DeviceOrientationEvent.requestPermission === "function";
+      let asked = false;
+
+      function requestTiltPermission() {
+        if (!needsPermission || asked) return;
+        asked = true;
+        DeviceOrientationEvent.requestPermission()
+          .then((state) => { if (state === "granted") window.addEventListener("deviceorientation", onOrientation); })
+          .catch(() => {})
+          .finally(() => { hint.hidden = true; });
+      }
+
+      if (needsPermission) {
+        if (matchMedia("(pointer: coarse)").matches) hint.hidden = false;
+      } else {
+        window.addEventListener("deviceorientation", onOrientation);
       }
 
       let resizeTimer;
       window.addEventListener("resize", () => {
         clearTimeout(resizeTimer);
-        resizeTimer = setTimeout(resize, 150);
+        resizeTimer = setTimeout(() => { resize(); if (reduceMotion) redraw(); }, 150);
       });
 
       resize();
-      if (reduceMotion) {
-        // Render a static snapshot instead of animating.
-        for (let i = 0; i < 400; i++) frame();
-      } else {
-        requestAnimationFrame(frame);
-      }
+      if (reduceMotion) redraw();
+      else requestAnimationFrame(loop);
     })();
   </script>
 </body>
