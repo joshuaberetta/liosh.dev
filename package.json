@@ -1,0 +1,13 @@
+{
+  "name": "liosh.dev",
+  "private": true,
+  "description": "liosh.dev: creative dev projects by Liam and Josh. Static site, no build step.",
+  "type": "module",
+  "scripts": {
+    "serve": "python3 -m http.server 8000",
+    "check": "node tools/check.mjs"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^23.11.1"
+  }
+}
