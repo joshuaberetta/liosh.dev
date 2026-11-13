@@ -177,15 +177,18 @@ function start() {
     else if (action === "flip") flip();
     else if (action === "scatter") sim.scatter(), sim.tap(1);
     else if (action === "pour") setPourMode(!pour.mode);
+    else if (action === "recenter") blocks.recenter();
   });
 
-  // Space taps the paper, arrow keys tilt the table, and holding P pours at the cursor.
+  // Space taps the paper, arrow keys tilt the table, holding P pours at the
+  // cursor, and C recenters the words.
   const keys = new Set();
   window.addEventListener("keydown", (e) => {
     if (e.target.closest("input, button")) return;
     if (e.key.startsWith("Arrow")) keys.add(e.key), e.preventDefault();
     else if (e.key === " ") sim.tap(), e.preventDefault();
     else if (e.key === "p") keys.add("p");
+    else if (e.key === "c") blocks.recenter();
   });
   window.addEventListener("keyup", (e) => keys.delete(e.key));
 
