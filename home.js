@@ -2,14 +2,15 @@ import { Sim } from "./lib/sim.js";
 import { createRenderer } from "./lib/render.js";
 import { Blocks } from "./lib/blocks.js";
 import { createFluid } from "./lib/fluid.js";
+import { createFerrofluid } from "./lib/ferrofluid.js";
 
-// Homepage background, in two modes: iron filings with wandering magnets, or
-// water streaming past. Every word on the page is a magnetized block you can
-// drag, throw and knock around, and both the field and the water respond to it.
+// Three backgrounds: iron filings, water, and magnetically peaked ferrofluid.
+// Every word is a draggable rigid body shared by all three simulations.
 
 const canvas = document.getElementById("field");
 const renderer = createRenderer(canvas);
 const fluid = createFluid(document.getElementById("water"));
+const ferrofluid = createFerrofluid(document.getElementById("ferrofluid"));
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const coarse = matchMedia("(pointer: coarse)").matches;
 
@@ -32,14 +33,30 @@ function start() {
     blocks.build(w, h, Number(lettersInput.value));
     sim.shapes = blocks.bodies;
     if (fluid) fluid.setBlocks(blocks.bodies);
+    if (ferrofluid) {
+      ferrofluid.setReducedMotion(reduceMotion);
+      ferrofluid.setBlocks(blocks.bodies);
+    }
   }
 
   // --- Modes -----------------------------------------------------------------
 
   let mode = "magnetic";
+  const modes = ["magnetic", ...(fluid ? ["water"] : []), ...(ferrofluid ? ["ferrofluid"] : [])];
   const modeLabel = document.getElementById("mode");
   const currentInput = document.getElementById("current");
-  if (!fluid) document.querySelector('[data-action="mode"]').hidden = true;
+  const pullInput = document.getElementById("pull");
+  if (modes.length < 2) document.querySelector('[data-action="mode"]').hidden = true;
+  let ferroPull = 1;
+  let ferroTouchId = null;
+  let ferroHasPosition = false;
+  let ferroShockTimer = 0;
+  let ferroMaskFrame = 0;
+  let ferroMaskSignature = "";
+  let ferroMotion = null;
+  const lastFerroSpeed = new Map();
+  const ferroHand = { x: 0, y: 0, active: false, strength: 0, lastX: 0, lastY: 0 };
+  pullInput.addEventListener("input", () => { ferroPull = Number(pullInput.value); });
 
   // The current eases in, since an instant start surges around the words.
   let ramp = 0;
@@ -48,6 +65,13 @@ function start() {
     mode = next;
     ramp = 0;
     document.body.classList.toggle("water", mode === "water");
+    document.body.classList.toggle("ferrofluid", mode === "ferrofluid");
+    if (ferrofluid) {
+      ferrofluid.setReducedMotion(reduceMotion);
+      ferrofluid.setHand(ferroHand.x, ferroHand.y, 0);
+      ferroHand.active = false;
+      ferroHand.strength = 0;
+    }
     modeLabel.textContent = mode;
     hand.on = false;
     setPourMode(false);
@@ -95,6 +119,10 @@ function start() {
     const nw = window.innerWidth, nh = window.innerHeight;
     renderer.resize(nw, nh, dpr);
     if (fluid) fluid.resize(nw, nh, dpr);
+    if (ferrofluid) {
+      ferrofluid.resize(nw, nh, dpr);
+      ferrofluid.setReducedMotion(reduceMotion);
+    }
     if (!sim.n) {
       const scale = Math.max(0.75, Math.min(1.15, Math.min(nw, nh) / 850));
       const count = Math.round(Math.max(2000, Math.min(24000, (nw * nh) / 60)) * (coarse ? 0.8 : 1));
@@ -137,7 +165,13 @@ function start() {
   }, true);
 
   document.addEventListener("pointermove", (e) => {
-    if (held && e.pointerId === held.id) blocks.dragTo(e.clientX, e.clientY);
+    if (held && e.pointerId === held.id) {
+      blocks.dragTo(e.clientX, e.clientY);
+      ferroHand.x = ferroHand.lastX = e.clientX;
+      ferroHand.y = ferroHand.lastY = e.clientY;
+      ferroHasPosition = true;
+      ferroHand.active = false;
+    }
   });
 
   const drop = (e) => {
@@ -167,6 +201,17 @@ function start() {
       if (e.pointerType === "mouse" || e.buttons) stir(e, e.buttons > 0);
       return;
     }
+    if (mode === "ferrofluid" && ferrofluid) {
+      if (e.pointerType === "mouse" || e.pointerId === ferroTouchId) {
+        ferroHand.lastX = ferroHasPosition ? ferroHand.x : e.clientX;
+        ferroHand.lastY = ferroHasPosition ? ferroHand.y : e.clientY;
+        ferroHand.x = e.clientX;
+        ferroHand.y = e.clientY;
+        ferroHasPosition = true;
+        ferroHand.active = true;
+      }
+      return;
+    }
     if (pour.active && e.pointerId === pour.id) pour.x = e.clientX, pour.y = e.clientY;
     if (e.pointerType !== "mouse" && e.pointerId !== touchId) return;
     hand.tx = e.clientX;
@@ -179,6 +224,16 @@ function start() {
     if (mode === "water") {
       if (e.pointerType !== "mouse") requestMotion();
       stirFrom.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      return;
+    }
+    if (mode === "ferrofluid" && ferrofluid) {
+      if (e.pointerType !== "mouse") requestMotion();
+      ferroHand.x = ferroHand.lastX = e.clientX;
+      ferroHand.y = ferroHand.lastY = e.clientY;
+      ferroHasPosition = true;
+      ferroHand.active = true;
+      ferroTouchId = e.pointerType === "mouse" ? null : e.pointerId;
+      downAt = { x: e.clientX, y: e.clientY, ferro: true, id: e.pointerId };
       return;
     }
     if (pour.mode) {
@@ -198,14 +253,26 @@ function start() {
     hand.on = true;
   });
 
+  function releaseFerro(e) {
+    if (e.pointerId !== ferroTouchId && e.pointerType !== "mouse") return;
+    if (downAt?.ferro && Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) < 6) {
+      ferrofluid?.disturb(e.clientX, e.clientY, 0.4);
+    }
+    if (e.pointerId === ferroTouchId) ferroTouchId = null;
+    ferroHand.active = false;
+    ferroHand.lastX = ferroHand.x = e.clientX;
+    ferroHand.lastY = ferroHand.y = e.clientY;
+    ferroHasPosition = true;
+    downAt = null;
+  }
   window.addEventListener("pointerup", (e) => {
+    if (mode === "ferrofluid") releaseFerro(e);
     if (e.target.closest && e.target.closest(".block")) return;
     if (pour.active && e.pointerId === pour.id) {
       pour.active = false;
       return;
     }
-    if (e.pointerType === "mouse") {
-      // A click (not a drag) flips the magnet in your hand.
+    if (e.pointerType === "mouse" && mode !== "ferrofluid") {
       if (downAt && Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) < 5) flip();
       downAt = null;
       return;
@@ -213,10 +280,14 @@ function start() {
     if (e.pointerId === touchId) touchId = null, hand.on = false;
   });
   window.addEventListener("pointercancel", (e) => {
+    if (mode === "ferrofluid") releaseFerro(e);
     if (e.pointerId === pour.id) pour.active = false;
     if (e.pointerId === touchId) touchId = null, hand.on = false;
   });
-  document.addEventListener("mouseout", (e) => { if (!e.relatedTarget) hand.on = false; });
+  document.addEventListener("mouseout", (e) => {
+    if (!e.relatedTarget) hand.on = false;
+    if (!e.relatedTarget) ferroHand.active = false;
+  });
 
   function flip() {
     hand.polarity *= -1;
@@ -231,8 +302,15 @@ function start() {
     else if (action === "scatter") sim.scatter(), sim.tap(1);
     else if (action === "pour") setPourMode(!pour.mode);
     else if (action === "recenter") blocks.recenter();
-    else if (action === "mode") setMode(mode === "water" ? "magnetic" : "water");
-    else if (action === "calm") fluid.clear(), ramp = 0;
+    else if (action === "mode") setMode(modes[(modes.indexOf(mode) + 1) % modes.length]);
+    else if (action === "shock") {
+      ferrofluid?.disturb(w * 0.5, h * 0.5, 0.65);
+      ferrofluid?.disturb(w * 0.5, h * 0.5, -0.24);
+    }
+    else if (action === "calm") {
+      if (mode === "water") fluid.clear(), ramp = 0;
+      else if (mode === "ferrofluid") ferrofluid?.calm();
+    }
   });
 
   // Space taps the paper, arrow keys tilt the table, holding P pours at the
@@ -241,7 +319,11 @@ function start() {
   window.addEventListener("keydown", (e) => {
     if (e.target.closest("input, button")) return;
     if (e.key.startsWith("Arrow")) keys.add(e.key), e.preventDefault();
-    else if (e.key === " ") sim.tap(), e.preventDefault();
+    else if (e.key === " ") {
+      if (mode === "ferrofluid") ferrofluid?.disturb(ferroHand.x || w / 2, ferroHand.y || h / 2, 0.5);
+      else sim.tap();
+      e.preventDefault();
+    }
     else if (e.key === "p") keys.add("p");
     else if (e.key === "c") blocks.recenter();
   });
@@ -313,9 +395,10 @@ function start() {
     current = poles();
     sim.poles = current;
 
-    if (mode === "water") {
-      // Afloat, the words slide more easily and the current drags them.
-      blocks.step({ gx: sim.gx, gy: sim.gy, agitation: 0, hand: null, friction: 0.35, water: fluid.velocityAt });
+    if (mode === "water" || mode === "ferrofluid") {
+      // Afloat, words slide more easily. Ferrofluid keeps the same rigid-body
+      // state as water, while its visual field reacts to those exact positions.
+      blocks.step({ gx: sim.gx, gy: sim.gy, agitation: 0, hand: null, friction: 0.35, water: mode === "water" ? fluid.velocityAt : null });
     } else {
       blocks.step({
         gx: sim.gx,
@@ -336,6 +419,33 @@ function start() {
     if (keys.has("ArrowDown")) ty += 0.5;
     sim.gx += (tx * G_TILT - sim.gx) * 0.2;
     sim.gy += (ty * G_TILT - sim.gy) * 0.2;
+
+    if (mode === "ferrofluid" && ferrofluid) {
+      const strengthTarget = ferroHand.active ? ferroPull : 0;
+      ferroHand.strength += (strengthTarget - ferroHand.strength) * 0.13;
+      const speed = Math.hypot(ferroHand.x - ferroHand.lastX, ferroHand.y - ferroHand.lastY);
+      ferrofluid.setHand(ferroHand.x, ferroHand.y, ferroHand.strength * 1.15, 0.05);
+      ferrofluid.setLight((ferroHand.x / w - 0.5) * 1.6, (0.5 - ferroHand.y / h) * 1.6);
+      if (speed > 22 && ferroShockTimer <= 0) {
+        ferrofluid.disturb(ferroHand.x, ferroHand.y, Math.min(0.4, speed * 0.009));
+        ferroShockTimer = 0.16;
+      }
+      ferroShockTimer = Math.max(0, ferroShockTimer - 1 / 60);
+      for (const b of blocks.bodies) {
+        const old = lastFerroSpeed.get(b) || 0;
+        const nowSpeed = Math.hypot(b.vx, b.vy);
+        if (nowSpeed - old > 2.5) ferrofluid.disturb(b.x, b.y, Math.min(0.55, nowSpeed * 0.1));
+        lastFerroSpeed.set(b, nowSpeed);
+      }
+      const signature = blocks.bodies.map((b) => `${Math.round(b.x * 2)},${Math.round(b.y * 2)},${Math.round(b.th * 100)}`).join("|");
+      if (signature !== ferroMaskSignature && ++ferroMaskFrame % 2 === 0) {
+        ferrofluid.setBlocks(blocks.bodies);
+        ferroMaskSignature = signature;
+      }
+      ferrofluid.step();
+      ferroHand.lastX = ferroHand.x;
+      ferroHand.lastY = ferroHand.y;
+    }
   }
 
   // Drop filings if this device can't keep up.
@@ -358,7 +468,7 @@ function start() {
       update();
       if (mode === "water") {
         fluid.step(stream(), t);
-      } else {
+      } else if (mode !== "ferrofluid") {
         const t0 = performance.now();
         sim.step();
         adapt(performance.now() - t0);
@@ -369,6 +479,8 @@ function start() {
     blocks.sync();
     if (mode === "water") {
       fluid.render([-0.4 + sim.gx * 0.5, 0.6 - sim.gy * 0.5]);
+    } else if (mode === "ferrofluid") {
+      ferrofluid?.render();
     } else {
       const light = { x: -w * 0.3 + sim.gx * w * 0.6, y: -h * 0.4 + sim.gy * h * 0.6 };
       renderer.draw(sim, current, light);

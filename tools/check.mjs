@@ -1,5 +1,5 @@
 // Smoke test: serve the site, load it in headless Chrome at desktop and phone
-// sizes, exercise both modes, save screenshots, and fail on any page error.
+// sizes, exercise all three modes, save screenshots, and fail on any page error.
 //
 //   npm install          (once, for puppeteer-core)
 //   npm run check
@@ -58,7 +58,12 @@ try {
   ]) {
     const page = await browser.newPage();
     page.on("pageerror", (e) => problems.push(`${name}: ${e.message}`));
-    page.on("console", (m) => m.type() === "error" && problems.push(`${name}: ${m.text()}`));
+    page.on("console", (m) => {
+      if (m.type() !== "error") return;
+      const text = m.text();
+      Promise.all(m.args().map((arg) => arg.evaluate((value) => value instanceof Error ? value.stack : String(value)).catch(() => ""))).then((values) => console.error(values.join("\n")));
+      problems.push(`${name}: ${text}`);
+    });
     page.on("response", (r) => r.status() >= 400 && problems.push(`${name}: ${r.status()} ${r.url()}`));
     await page.setViewport(viewport);
     await page.goto(url);
@@ -82,7 +87,43 @@ try {
     await page.screenshot({ path: join(shots, `${name}-water.png`) });
     const waterFps = await fps(page);
 
-    console.log(`${name.padEnd(8)} magnetic ${magneticFps} fps · water ${waterFps} fps`);
+    // Ferrofluid: settle, pull the pointer, and send a shockwave.
+    await page.$eval('[data-action="recenter"]', (b) => b.click());
+    await page.$eval('[data-action="mode"]', (b) => b.click());
+    await wait(2500);
+    await page.mouse.move(viewport.width * 0.7, viewport.height * 0.4);
+    await wait(600);
+    await page.screenshot({ path: join(shots, `${name}-ferrofluid.png`) });
+    await page.$eval('[data-action="shock"]', (b) => b.click());
+    await wait(250);
+    await page.screenshot({ path: join(shots, `${name}-shockwave.png`) });
+    const ferrofluidFps = await fps(page);
+    await page.$eval('[data-action="calm"]', (b) => b.click());
+    for (const expected of ["magnetic", "water", "ferrofluid", "magnetic"]) {
+      await page.$eval('[data-action="mode"]', (b) => b.click());
+      const state = await page.evaluate(() => ({
+        mode: document.getElementById("mode").textContent,
+        visible: [...document.querySelectorAll("canvas")].filter((c) => getComputedStyle(c).display !== "none").map((c) => c.id),
+        controls: [...document.querySelectorAll("[data-mode]")].filter((e) => getComputedStyle(e).display !== "none").map((e) => e.dataset.mode),
+      }));
+      if (state.mode !== expected || state.visible.length !== 1 || state.controls.length === 0 || !state.controls.every((control) => control === expected)) {
+        problems.push(`${name}: bad mode/controls after switching to ${expected}: ${JSON.stringify(state)}`);
+      }
+    }
+
+    // Verify reduced motion from page load, not just after changing a setting.
+    await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
+    await page.reload();
+    await page.$eval('[data-action="mode"]', (b) => b.click());
+    await page.$eval('[data-action="mode"]', (b) => b.click());
+    await wait(1000);
+    await page.screenshot({ path: join(shots, `${name}-reduced-motion.png`) });
+    await page.mouse.click(viewport.width * 0.7, viewport.height * 0.4);
+    await page.$eval('[data-action="shock"]', (b) => b.click());
+    await wait(400);
+    await page.screenshot({ path: join(shots, `${name}-reduced-shock.png`) });
+
+    console.log(`${name.padEnd(8)} magnetic ${magneticFps} fps · water ${waterFps} fps · ferrofluid ${ferrofluidFps} fps`);
     await page.close();
   }
 } finally {

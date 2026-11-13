@@ -2,12 +2,14 @@
 
 The home of **liosh**, creative dev projects by Liam and Josh. The page is a toy
 physics playground: every word on it is a magnetized block you can drag, throw
-and knock around, sitting in one of two simulations.
+and knock around, sitting in one of three simulations.
 
 - **Magnetic**: tens of thousands of iron filings on paper, pulled into field
   lines by wandering bar magnets, the magnet in your hand, and the words.
 - **Water**: a current streaming past the words like rocks in a river, with
   eddies, wakes and stirring.
+- **Ferrofluid**: liquid chrome pulled into magnetic peaks around the words,
+  with pointer attraction and expanding shockwaves.
 
 It's a static site with no build step and no runtime dependencies, served by
 GitHub Pages at <https://liosh.dev> from the `main` branch.
@@ -22,7 +24,7 @@ npm run serve          # or: python3 -m http.server 8000
 
 Then open <http://localhost:8000>.
 
-To smoke-test both modes at desktop and phone sizes:
+To smoke-test all three modes at desktop and phone sizes:
 
 ```sh
 npm install            # once; installs puppeteer-core, which drives your own Chrome
@@ -43,6 +45,9 @@ without errors and still look wrong.
 | Tilt | arrow keys | tilt the phone (iOS asks permission on first tap) |
 | Pour filings (magnetic) | hold P, or **pour** then drag | **pour** then drag |
 | Stir (water) | move or drag the cursor | drag |
+| Attract ferrofluid | move or hold the cursor | touch and drag |
+| Ferrofluid shockwave | space, quick drag, throw a word, or **shockwave** | tap, quick drag, throw a word, or **shockwave** |
+| Magnetic pull / calm surface | **pull** slider / **calm** | **pull** slider / **calm** |
 | Recenter the words | C, or **recenter** | **recenter** |
 
 ## Files
@@ -54,6 +59,7 @@ lib/sim.js       Iron filings physics (CPU).
 lib/render.js    Draws the filings (WebGL2).
 lib/blocks.js    Word blocks: their fields, rigid-body physics, collisions.
 lib/fluid.js     Water: GPU fluid solver, and its rendering (WebGL2).
+lib/ferrofluid.js Ferrofluid: magnetic heightfield and chrome shading (WebGL2).
 tools/check.mjs  Headless smoke test.
 ```
 
@@ -174,6 +180,41 @@ current can't move resting words but hard stirring can. The tiny "·" is the
 exception and can get swept away, which is fair given its size.
 
 The display pass shades the dye as a rippled surface with a specular highlight.
+
+### Ferrofluid (`lib/ferrofluid.js`)
+
+Ferrofluid is a **magnetically forced, damped heightfield**, not a volumetric
+liquid or a Navier–Stokes simulation. It shares the same rigid-body positions
+and touch/mouse coordinate transforms as the other modes.
+
+- **Solid masks.** Exact oriented collision rectangles are rasterized into a
+  low-resolution top-down mask without re-measuring DOM layout.
+- **Distance and potential.** A two-pass exact Euclidean distance transform
+  provides the solid distance and its falloff. A broad potential supplies the
+  liquid pool; localized, narrow super-Gaussian tips create the ferrofluid
+  needles around the solid boundary.
+- **Static and pointer fields.** The static word field and the pointer's
+  narrow needle plus broad skirt are rendered to separate `R16F` textures and
+  explicitly added in a total-field pass. Pointer velocity supplies impulses;
+  sudden word acceleration also creates shockwaves. Touch release clears the
+  attraction state and resets movement history.
+- **Height dynamics.** A spring toward the target field, a Laplacian wave term,
+  and damping advance ping-ponged height and velocity textures. Impulses have
+  a signed front and wake, propagate outward as expanding rings, and decay
+  with age. Consecutive impulses remain distinct.
+- **Shading.** The heightfield provides normal-mapped relief. Procedural chrome
+  shading uses Fresnel-weighted reflections, a neutral HDR softbox, restrained
+  coral/teal rims, and highlights gated by relief so the level pool stays dark.
+- **Precision and color.** Physical state uses `R16F`; scene and bloom use
+  `RGBA16F`. Bloom is added to linear radiance before ACES tone mapping and
+  display encoding, not in display space. Every pass has its own FBO and
+  explicitly binds texture units; a pass never reads its render target.
+- **Reduced motion.** The static shape is installed directly without ambient
+  waves. Direct pointer movement, word dragging, and explicit shockwaves still
+  work, then the surface settles again.
+- **Controls.** The **pull** slider controls pointer attraction, **shockwave**
+  adds an expanding impulse, and **calm** clears waves while retaining the
+  magnetic shape. Space triggers a shockwave; **scatter** remains magnetic-only.
 
 ## Extending it
 

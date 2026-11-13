@@ -124,10 +124,11 @@
     .controls > [aria-pressed="true"] { border-color: #ff7a59; color: #ff7a59; }
     .pour-mode canvas { cursor: cell; }
 
-    /* Magnetic and water modes each show their own canvas and controls. */
-    #water, .water [data-mode="magnetic"], body:not(.water) [data-mode="water"] { display: none; }
-    .water #field { display: none; }
-    .water #water { display: block; }
+    /* Exactly one canvas and one set of mode-specific controls are visible. */
+    #water, #ferrofluid, [data-mode] { display: none; }
+    body:not(.water):not(.ferrofluid) [data-mode="magnetic"], .water [data-mode="water"], .ferrofluid [data-mode="ferrofluid"] { display: inline-flex; }
+    .water #field, .ferrofluid #field { display: none; }
+    .water #water, .ferrofluid #ferrofluid { display: block; }
     button:active { transform: scale(0.97); }
 
     input[type="range"] {
@@ -140,6 +141,7 @@
 <body>
   <canvas id="field" aria-hidden="true"></canvas>
   <canvas id="water" aria-hidden="true"></canvas>
+  <canvas id="ferrofluid" aria-hidden="true"></canvas>
   <main>
     <h1 class="block" data-pole="N">liosh</h1>
     <p>
@@ -163,6 +165,9 @@
       <button data-action="scatter" data-mode="magnetic">scatter</button>
       <label data-mode="water">current <input type="range" id="current" min="0" max="3" step="0.05" value="1" aria-label="Water current"></label>
       <button data-action="calm" data-mode="water">calm</button>
+      <label data-mode="ferrofluid">pull <input type="range" id="pull" min="0.25" max="2" step="0.05" value="1" aria-label="Magnetic pull"></label>
+      <button data-action="shock" data-mode="ferrofluid">shockwave</button>
+      <button data-action="calm" data-mode="ferrofluid">calm</button>
       <button data-action="recenter">recenter</button>
     </nav>
   </footer>
