@@ -1,12 +1,15 @@
 import { Sim } from "./lib/sim.js";
 import { createRenderer } from "./lib/render.js";
 import { Blocks } from "./lib/blocks.js";
+import { createFluid } from "./lib/fluid.js";
 
-// Homepage background: the iron filings simulation with wandering magnets. Every
-// word on the page is a magnetized block you can drag, throw and knock around.
+// Homepage background, in two modes: iron filings with wandering magnets, or
+// water streaming past. Every word on the page is a magnetized block you can
+// drag, throw and knock around, and both the field and the water respond to it.
 
 const canvas = document.getElementById("field");
 const renderer = createRenderer(canvas);
+const fluid = createFluid(document.getElementById("water"));
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const coarse = matchMedia("(pointer: coarse)").matches;
 
@@ -28,6 +31,46 @@ function start() {
   function buildBlocks() {
     blocks.build(w, h, Number(lettersInput.value));
     sim.shapes = blocks.bodies;
+    if (fluid) fluid.setBlocks(blocks.bodies);
+  }
+
+  // --- Modes -----------------------------------------------------------------
+
+  let mode = "magnetic";
+  const modeLabel = document.getElementById("mode");
+  const currentInput = document.getElementById("current");
+  if (!fluid) document.querySelector('[data-action="mode"]').hidden = true;
+
+  // The current eases in, since an instant start surges around the words.
+  let ramp = 0;
+
+  function setMode(next) {
+    mode = next;
+    ramp = 0;
+    document.body.classList.toggle("water", mode === "water");
+    modeLabel.textContent = mode;
+    hand.on = false;
+    setPourMode(false);
+  }
+
+  // The current runs left to right, or downhill when the phone (or table) is tilted.
+  function stream() {
+    ramp = Math.min(1, ramp + 1 / 120);
+    const speed = Number(currentInput.value) * 2.2 * ramp * ramp;
+    const g = Math.hypot(sim.gx, sim.gy);
+    return g > 0.08 ? { x: (sim.gx / g) * speed, y: (sim.gy / g) * speed } : { x: speed, y: 0 };
+  }
+
+  // Moving the pointer stirs the water; pressing stirs harder and adds a little foam.
+  const stirFrom = new Map();
+  function stir(e, pressed) {
+    const last = stirFrom.get(e.pointerId);
+    stirFrom.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (!last) return;
+    const dx = e.clientX - last.x, dy = e.clientY - last.y;
+    if (!dx && !dy) return;
+    const k = pressed ? 0.9 : 0.35;
+    fluid.splat(e.clientX, e.clientY, dx * k, dy * k, pressed ? [0.025, 0.035, 0.04] : null);
   }
 
   // --- Magnets ---------------------------------------------------------------
@@ -51,6 +94,7 @@ function start() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const nw = window.innerWidth, nh = window.innerHeight;
     renderer.resize(nw, nh, dpr);
+    if (fluid) fluid.resize(nw, nh, dpr);
     if (!sim.n) {
       const scale = Math.max(0.75, Math.min(1.15, Math.min(nw, nh) / 850));
       const count = Math.round(Math.max(2000, Math.min(24000, (nw * nh) / 60)) * (coarse ? 0.8 : 1));
@@ -119,6 +163,10 @@ function start() {
 
   window.addEventListener("pointermove", (e) => {
     if (held) return;
+    if (mode === "water") {
+      if (e.pointerType === "mouse" || e.buttons) stir(e, e.buttons > 0);
+      return;
+    }
     if (pour.active && e.pointerId === pour.id) pour.x = e.clientX, pour.y = e.clientY;
     if (e.pointerType !== "mouse" && e.pointerId !== touchId) return;
     hand.tx = e.clientX;
@@ -128,6 +176,11 @@ function start() {
 
   window.addEventListener("pointerdown", (e) => {
     if (held || e.target.closest("footer")) return;
+    if (mode === "water") {
+      if (e.pointerType !== "mouse") requestMotion();
+      stirFrom.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      return;
+    }
     if (pour.mode) {
       if (e.pointerType !== "mouse") requestMotion();
       Object.assign(pour, { active: true, id: e.pointerId, x: e.clientX, y: e.clientY });
@@ -178,6 +231,8 @@ function start() {
     else if (action === "scatter") sim.scatter(), sim.tap(1);
     else if (action === "pour") setPourMode(!pour.mode);
     else if (action === "recenter") blocks.recenter();
+    else if (action === "mode") setMode(mode === "water" ? "magnetic" : "water");
+    else if (action === "calm") fluid.clear(), ramp = 0;
   });
 
   // Space taps the paper, arrow keys tilt the table, holding P pours at the
@@ -257,16 +312,21 @@ function start() {
     hand.fade += ((hand.on ? 1 : 0) - hand.fade) * 0.12;
     current = poles();
     sim.poles = current;
-    blocks.step({
-      gx: sim.gx,
-      gy: sim.gy,
-      agitation: Math.max(0, sim.agitation - sim.restless),
-      hand: hand.fade > 0.01 ? { x: hand.x, y: hand.y, q: 1.6 * hand.polarity * hand.fade } : null,
-    });
 
-    const s = sim.scale;
-    if (pour.active) sim.pour(pour.x, pour.y, 12, 10 * s);
-    else if (keys.has("p")) sim.pour(hand.tx, hand.ty, 12, 10 * s);
+    if (mode === "water") {
+      // Afloat, the words slide more easily and the current drags them.
+      blocks.step({ gx: sim.gx, gy: sim.gy, agitation: 0, hand: null, friction: 0.35, water: fluid.velocityAt });
+    } else {
+      blocks.step({
+        gx: sim.gx,
+        gy: sim.gy,
+        agitation: Math.max(0, sim.agitation - sim.restless),
+        hand: hand.fade > 0.01 ? { x: hand.x, y: hand.y, q: 1.6 * hand.polarity * hand.fade } : null,
+      });
+      const s = sim.scale;
+      if (pour.active) sim.pour(pour.x, pour.y, 12, 10 * s);
+      else if (keys.has("p")) sim.pour(hand.tx, hand.ty, 12, 10 * s);
+    }
 
     let tx = 0, ty = 0;
     if (tilt) tx = tilt.x, ty = tilt.y;
@@ -296,15 +356,23 @@ function start() {
     let steps = 0;
     while (acc >= 1000 / 60 && steps < 2) {
       update();
-      const t0 = performance.now();
-      sim.step();
-      adapt(performance.now() - t0);
+      if (mode === "water") {
+        fluid.step(stream(), t);
+      } else {
+        const t0 = performance.now();
+        sim.step();
+        adapt(performance.now() - t0);
+      }
       acc -= 1000 / 60;
       steps++;
     }
     blocks.sync();
-    const light = { x: -w * 0.3 + sim.gx * w * 0.6, y: -h * 0.4 + sim.gy * h * 0.6 };
-    renderer.draw(sim, current, light);
+    if (mode === "water") {
+      fluid.render([-0.4 + sim.gx * 0.5, 0.6 - sim.gy * 0.5]);
+    } else {
+      const light = { x: -w * 0.3 + sim.gx * w * 0.6, y: -h * 0.4 + sim.gy * h * 0.6 };
+      renderer.draw(sim, current, light);
+    }
     requestAnimationFrame(frame);
   }
 

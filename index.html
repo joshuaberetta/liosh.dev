@@ -123,6 +123,11 @@
     .controls > *:hover { border-color: rgba(244, 239, 230, 0.45); }
     .controls > [aria-pressed="true"] { border-color: #ff7a59; color: #ff7a59; }
     .pour-mode canvas { cursor: cell; }
+
+    /* Magnetic and water modes each show their own canvas and controls. */
+    #water, .water [data-mode="magnetic"], body:not(.water) [data-mode="water"] { display: none; }
+    .water #field { display: none; }
+    .water #water { display: block; }
     button:active { transform: scale(0.97); }
 
     input[type="range"] {
@@ -134,6 +139,7 @@
 </head>
 <body>
   <canvas id="field" aria-hidden="true"></canvas>
+  <canvas id="water" aria-hidden="true"></canvas>
   <main>
     <h1 class="block" data-pole="N">liosh</h1>
     <p>
@@ -149,11 +155,14 @@
   <footer>
     <p class="hint" id="hint" hidden>tap to enable motion</p>
     <nav class="controls">
-      <button data-action="tap">tap paper</button>
-      <label>words <input type="range" id="letters" min="0" max="3" step="0.05" value="1" aria-label="Word magnet strength"></label>
-      <button data-action="flip">hand: <span id="pole">N</span></button>
-      <button data-action="pour" aria-pressed="false">pour</button>
-      <button data-action="scatter">scatter</button>
+      <button data-action="mode">mode: <span id="mode">magnetic</span></button>
+      <button data-action="tap" data-mode="magnetic">tap paper</button>
+      <label data-mode="magnetic">words <input type="range" id="letters" min="0" max="3" step="0.05" value="1" aria-label="Word magnet strength"></label>
+      <button data-action="flip" data-mode="magnetic">hand: <span id="pole">N</span></button>
+      <button data-action="pour" data-mode="magnetic" aria-pressed="false">pour</button>
+      <button data-action="scatter" data-mode="magnetic">scatter</button>
+      <label data-mode="water">current <input type="range" id="current" min="0" max="3" step="0.05" value="1" aria-label="Water current"></label>
+      <button data-action="calm" data-mode="water">calm</button>
       <button data-action="recenter">recenter</button>
     </nav>
   </footer>
