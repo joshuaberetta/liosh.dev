@@ -53,9 +53,14 @@
       line-height: 0.9;
       letter-spacing: -0.03em;
       mix-blend-mode: difference;
+    }
+
+    .block {
+      display: inline-block;
       pointer-events: auto;
       cursor: grab;
       touch-action: none;
+      will-change: transform;
     }
 
     .dragging, .dragging * { cursor: grabbing; }
@@ -116,6 +121,8 @@
     }
 
     .controls > *:hover { border-color: rgba(244, 239, 230, 0.45); }
+    .controls > [aria-pressed="true"] { border-color: #ff7a59; color: #ff7a59; }
+    .pour-mode canvas { cursor: cell; }
     button:active { transform: scale(0.97); }
 
     input[type="range"] {
@@ -128,16 +135,24 @@
 <body>
   <canvas id="field" aria-hidden="true"></canvas>
   <main>
-    <h1>liosh</h1>
-    <p>liam + josh &middot; creative dev</p>
+    <h1 class="block" data-pole="N">liosh</h1>
+    <p>
+      <span class="block" data-pole="S">liam</span>
+      <span class="block" data-pole="S">+</span>
+      <span class="block" data-pole="S">josh</span>
+      <span class="block" data-pole="S">&middot;</span>
+      <span class="block" data-pole="S">creative</span>
+      <span class="block" data-pole="S">dev</span>
+    </p>
   </main>
 
   <footer>
     <p class="hint" id="hint" hidden>tap to enable motion</p>
     <nav class="controls">
       <button data-action="tap">tap paper</button>
-      <label>letters <input type="range" id="letters" min="0" max="3" step="0.05" value="1" aria-label="Letter magnet strength"></label>
+      <label>words <input type="range" id="letters" min="0" max="3" step="0.05" value="1" aria-label="Word magnet strength"></label>
       <button data-action="flip">hand: <span id="pole">N</span></button>
+      <button data-action="pour" aria-pressed="false">pour</button>
       <button data-action="scatter">scatter</button>
     </nav>
   </footer>
