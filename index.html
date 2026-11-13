@@ -64,6 +64,20 @@
       text-shadow: 0 0 6px #0b0a12, 0 0 12px #0b0a12, 0 0 24px #0b0a12;
     }
 
+    a {
+      font-family: "JetBrains Mono", ui-monospace, monospace;
+      font-size: 0.7rem;
+      letter-spacing: 0.2em;
+      color: inherit;
+      text-decoration: none;
+      opacity: 0.55;
+      pointer-events: auto;
+      text-shadow: 0 0 6px #0b0a12, 0 0 12px #0b0a12;
+      transition: opacity 0.3s;
+    }
+
+    a:hover { opacity: 1; }
+
     .hint {
       position: fixed;
       bottom: calc(1.5rem + env(safe-area-inset-bottom));
@@ -82,6 +96,7 @@
   <main>
     <h1>liosh</h1>
     <p>liam + josh &middot; creative dev</p>
+    <a href="/filings/">filings &rarr;</a>
     <p class="hint" id="hint" hidden>tap to steer with tilt</p>
   </main>
 
@@ -107,6 +122,74 @@
       let tilt = null;
       let touching = false;
 
+      // The title is magnetized too: filings drift toward the letters and pile up on them.
+      const TC = 3;          // text field grid cell, px
+      let text = null;       // { gw, gh, mask, near, gx, gy, occ }
+
+      function boxBlur(src, gw, gh, r) {
+        const tmp = new Float32Array(src.length), out = new Float32Array(src.length);
+        const norm = 1 / (2 * r + 1);
+        for (let y = 0; y < gh; y++) {
+          const row = y * gw;
+          let sum = 0;
+          for (let x = -r; x <= r; x++) sum += src[row + Math.min(gw - 1, Math.max(0, x))];
+          for (let x = 0; x < gw; x++) {
+            tmp[row + x] = sum * norm;
+            sum += src[row + Math.min(gw - 1, x + r + 1)] - src[row + Math.max(0, x - r)];
+          }
+        }
+        for (let x = 0; x < gw; x++) {
+          let sum = 0;
+          for (let y = -r; y <= r; y++) sum += tmp[Math.min(gh - 1, Math.max(0, y)) * gw + x];
+          for (let y = 0; y < gh; y++) {
+            out[y * gw + x] = sum * norm;
+            sum += tmp[Math.min(gh - 1, y + r + 1) * gw + x] - tmp[Math.max(0, y - r) * gw + x];
+          }
+        }
+        return out;
+      }
+
+      const blur = (src, gw, gh, r) => boxBlur(boxBlur(boxBlur(src, gw, gh, r), gw, gh, r), gw, gh, r);
+
+      // Rasterize the title where it sits on screen, then blur it into a potential
+      // whose gradient pulls filings in from afar and points straight out of the glyphs.
+      function buildText() {
+        const el = document.querySelector("h1");
+        const rect = el.getBoundingClientRect();
+        const fs = parseFloat(getComputedStyle(el).fontSize);
+        const gw = Math.ceil(w / TC), gh = Math.ceil(h / TC);
+        const off = document.createElement("canvas");
+        off.width = gw;
+        off.height = gh;
+        const c = off.getContext("2d", { willReadFrequently: true });
+        c.scale(1 / TC, 1 / TC);
+        c.font = `italic 300 ${fs}px Fraunces, Georgia, serif`;
+        if ("letterSpacing" in c) c.letterSpacing = `${-0.03 * fs}px`;
+        c.textAlign = "center";
+        const m = c.measureText(el.textContent);
+        const asc = m.fontBoundingBoxAscent ?? fs * 0.95, desc = m.fontBoundingBoxDescent ?? fs * 0.25;
+        c.fillText(el.textContent, rect.left + rect.width / 2, rect.top + (rect.height - asc - desc) / 2 + asc);
+
+        const px = c.getImageData(0, 0, gw, gh).data;
+        const mask = new Float32Array(gw * gh);
+        for (let i = 0; i < mask.length; i++) mask[i] = px[i * 4 + 3] / 255;
+        const near = blur(mask, gw, gh, Math.max(2, Math.round((fs * 0.05) / TC)));
+        const far = blur(mask, gw, gh, Math.max(4, Math.round((fs * 0.3) / TC)));
+
+        const gx = new Float32Array(gw * gh), gy = new Float32Array(gw * gh);
+        let max = 1e-6;
+        for (let y = 1; y < gh - 1; y++) {
+          for (let x = 1; x < gw - 1; x++) {
+            const i = y * gw + x;
+            gx[i] = near[i + 1] - near[i - 1] + 1.5 * (far[i + 1] - far[i - 1]);
+            gy[i] = near[i + gw] - near[i - gw] + 1.5 * (far[i + gw] - far[i - gw]);
+            max = Math.max(max, Math.hypot(gx[i], gy[i]));
+          }
+        }
+        for (let i = 0; i < gx.length; i++) gx[i] /= max, gy[i] /= max;
+        text = { gw, gh, mask, near, gx, gy, occ: new Uint8Array(gw * gh) };
+      }
+
       function resize() {
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
         w = window.innerWidth;
@@ -123,16 +206,36 @@
           return f;
         });
         if (!magnet.active) magnet.x = magnet.tx = w / 2, magnet.y = magnet.ty = h / 2;
+        text = null;
+        document.fonts.load("italic 300 100px Fraunces").finally(buildText);
       }
 
       function spawn(f) {
-        f.x = Math.random() * w;
-        f.y = Math.random() * h;
+        if (f.stuck) unstick(f);
+        do {
+          f.x = Math.random() * w;
+          f.y = Math.random() * h;
+        } while (text && text.mask[cellAt(f.x, f.y)] > 0.1);
         f.len = 3 + Math.random() * 6;
         f.ease = 0.06 + Math.random() * 0.1;
         f.life = 0;
         f.max = 500 + Math.random() * 900;
         return f;
+      }
+
+      const cellAt = (x, y) =>
+        Math.min(text.gh - 1, Math.max(0, (y / TC) | 0)) * text.gw + Math.min(text.gw - 1, Math.max(0, (x / TC) | 0));
+
+      function stick(f, cell) {
+        f.stuck = true;
+        f.cell = cell;
+        text.occ[cell]++;
+        f.max = f.life + 2400 + Math.random() * 3600;
+      }
+
+      function unstick(f) {
+        f.stuck = false;
+        if (text && text.occ[f.cell]) text.occ[f.cell]--;
       }
 
       // Two slowly wandering bar magnets (each a +/- pole pair) plus the user's magnet.
@@ -162,6 +265,8 @@
         magnet.strength += ((on ? 1 : 0) - magnet.strength) * 0.05;
 
         const ps = poles();
+        const textB = 6 / unit;
+        const wipe2 = (unit * 0.07) ** 2;
         const paths = SHADES.map(() => new Path2D());
 
         for (const f of filings) {
@@ -177,6 +282,27 @@
             if (s > strongest) strongest = s, pullSign = -Math.sign(p.q);
           }
 
+          // Near the title its field takes over, and filings that touch the
+          // letters (or filings already stuck to them) stay put, so the pile grows.
+          let tgx = 0, tgy = 0;
+          if (text) {
+            const cell = cellAt(f.x, f.y);
+            tgx = text.gx[cell];
+            tgy = text.gy[cell];
+            bx += tgx * textB;
+            by += tgy * textB;
+            if (f.stuck) {
+              const dx = f.x - magnet.x, dy = f.y - magnet.y;
+              if (magnet.strength > 0.3 && dx * dx + dy * dy < wipe2) unstick(f);
+            } else if (text.mask[cell] > 0.4) {
+              stick(f, cell);
+            } else if (Math.random() < Math.min(0.35, text.near[cell] * 1.2)) {
+              // Fur gets sparser further from the letters, so the pile tapers off.
+              const { occ, gw } = text;
+              if (occ[cell] || occ[cell - 1] || occ[cell + 1] || occ[cell - gw] || occ[cell + gw]) stick(f, cell);
+            }
+          }
+
           const mag = Math.hypot(bx, by);
           // Filings are unoriented: align to the field line, whichever way is closer.
           const target = Math.atan2(by, bx);
@@ -184,22 +310,25 @@
           diff = ((diff + Math.PI / 2) % Math.PI + Math.PI) % Math.PI - Math.PI / 2;
           f.angle += snap ? diff : diff * f.ease;
 
-          // Like real filings, creep along the field line toward the nearest pole.
-          const pull = Math.min(mag * unit * 0.25, 1.2) * pullSign;
-          if (mag > 0) {
-            f.x += (bx / mag) * pull * 0.35;
-            f.y += (by / mag) * pull * 0.35;
+          // Like real filings, creep along the field line toward the nearest pole,
+          // and up the title's field toward the letters.
+          if (!f.stuck) {
+            const pull = Math.min(mag * unit * 0.25, 1.2) * pullSign;
+            if (mag > 0) {
+              f.x += (bx / mag) * pull * 0.35 + tgx * 1.2;
+              f.y += (by / mag) * pull * 0.35 + tgy * 1.2;
+            }
           }
 
           const fade = Math.min(1, f.life / 60, (f.max - f.life) / 60);
-          const bright = (0.2 + 0.8 * (1 - Math.exp(-mag * unit * 0.9))) * fade;
+          const bright = (f.stuck ? 1 : 0.2 + 0.8 * (1 - Math.exp(-mag * unit * 0.9))) * fade;
           const shade = Math.min(SHADES.length - 1, (bright * SHADES.length) | 0);
           const half = f.len * (0.6 + bright * 0.6) / 2;
           const cx = Math.cos(f.angle) * half, cy = Math.sin(f.angle) * half;
           paths[shade].moveTo(f.x - cx, f.y - cy);
           paths[shade].lineTo(f.x + cx, f.y + cy);
 
-          if (++f.life > f.max || sink || f.x < -10 || f.x > w + 10 || f.y < -10 || f.y > h + 10) spawn(f);
+          if (++f.life > f.max || (sink && !f.stuck) || f.x < -10 || f.x > w + 10 || f.y < -10 || f.y > h + 10) spawn(f);
         }
 
         ctx.fillStyle = "#0b0a12";
@@ -244,6 +373,7 @@
       document.addEventListener("mouseout", (e) => { if (!e.relatedTarget) { magnet.active = false; redraw(); } });
 
       window.addEventListener("pointerdown", (e) => {
+        if (e.target.closest("a")) return;
         // Click or tap flips the magnet's polarity.
         magnet.polarity *= -1;
         if (e.pointerType !== "mouse") {
